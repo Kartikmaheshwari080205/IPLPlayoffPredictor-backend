@@ -31,7 +31,7 @@ vector<Team> teams = {
 };
 vector<Match> matches;
 vector<vector<int>> h2h;
-int global = 1;
+long long global = 1;
 vector<int> points;
 vector<pair<int, int>> remainingmatches;
 vector<vector<double>> pairwiseprobabilities;
