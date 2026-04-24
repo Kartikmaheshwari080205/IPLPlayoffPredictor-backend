@@ -24,6 +24,7 @@ class Match {
 };
 
 int n = 10;
+int m = 4;
 vector<Team> teams = {
     {"MI",0}, {"CSK",1}, {"RCB",2}, {"KKR",3}, {"RR",4},
     {"DC",5}, {"PBKS",6}, {"SRH",7}, {"GT",8}, {"LSG",9}
@@ -434,7 +435,7 @@ void ProcessMemo()
         }
         sort(v.begin(), v.end(), greater<>());
         int i = 0, taken = 0;
-        while(i < n && taken < min(4, n))
+        while(i < n && taken < min(m, n))
         {
             int j = i;
             while(j < n && v[j].first == v[i].first)
@@ -442,7 +443,7 @@ void ProcessMemo()
                 j++;
             }
             int groupSize = j - i;
-            int slots = min(4, n) - taken;
+            int slots = min(m, n) - taken;
             int use = min(groupSize, slots);
             double share = (double)use / groupSize;
             for(int k = i; k < j; k++)
