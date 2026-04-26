@@ -5,10 +5,11 @@ import json
 import shutil
 import subprocess
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Optional
+
+import requests
 
 
 ROOT = Path(__file__).resolve().parent
@@ -63,7 +64,6 @@ def detect_newline(text: str) -> str:
     return "\r\n" if "\r\n" in text else "\n"
 
 
-# ✅ FIXED DOWNLOAD FUNCTION
 def download_and_extract_json_archive() -> None:
     if JSON_DIR.exists():
         shutil.rmtree(JSON_DIR)
@@ -72,25 +72,28 @@ def download_and_extract_json_archive() -> None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
         temp_zip_path = Path(tmp_file.name)
 
-        req = urllib.request.Request(
-            CRICSHEET_URL,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/zip,application/octet-stream,*/*",
+            "Referer": "https://cricsheet.org/",
+        }
 
-        with urllib.request.urlopen(req) as response:
-            content_type = response.headers.get("Content-Type")
-            print("Download Content-Type:", content_type)
+        response = requests.get(CRICSHEET_URL, headers=headers, stream=True)
 
-            shutil.copyfileobj(response, tmp_file)
+        print("Status Code:", response.status_code)
+        print("Content-Type:", response.headers.get("Content-Type"))
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Download failed: {response.status_code}")
+
+        for chunk in response.iter_content(chunk_size=8192):
+            tmp_file.write(chunk)
 
     if not zipfile.is_zipfile(temp_zip_path):
         with open(temp_zip_path, "rb") as f:
             preview = f.read(300)
 
-        raise ValueError(
-            "Downloaded file is not a valid ZIP.\n"
-            f"Preview:\n{preview}"
-        )
+        raise ValueError(f"Invalid ZIP download\nPreview:\n{preview}")
 
     try:
         with zipfile.ZipFile(temp_zip_path) as archive:
@@ -101,18 +104,16 @@ def download_and_extract_json_archive() -> None:
         temp_zip_path.unlink(missing_ok=True)
 
 
-def load_matches() -> tuple[list[dict[str, object]], str]:
-    raw_text = MATCHES_FILE.read_text(encoding="utf-8")
-    newline = detect_newline(raw_text)
-
+def load_matches():
+    raw = MATCHES_FILE.read_text()
     entries = []
-    for line in raw_text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+
+    for line in raw.splitlines():
+        if not line.strip() or line.startswith("#"):
             entries.append({"kind": "passthrough", "line": line})
             continue
 
-        t1, t2, mid, res = stripped.split()
+        t1, t2, mid, res = line.split()
         entries.append({
             "kind": "match",
             "team1": normalize_team_name(t1),
@@ -121,17 +122,17 @@ def load_matches() -> tuple[list[dict[str, object]], str]:
             "result": res
         })
 
-    return entries, newline
+    return entries, "\n"
 
 
-def write_matches(entries, newline):
+def write_matches(entries, nl):
     lines = []
     for e in entries:
         if e["kind"] == "passthrough":
             lines.append(e["line"])
         else:
             lines.append(f"{e['team1']} {e['team2']} {e['match_id']} {e['result']}")
-    MATCHES_FILE.write_text(newline.join(lines) + newline)
+    MATCHES_FILE.write_text("\n".join(lines) + "\n")
 
 
 def load_h2h():
@@ -151,29 +152,28 @@ def load_h2h():
 
     for row in data[1:]:
         parts = row.split()
-        rteam = normalize_team_name(parts[0])
-        for cteam, val in zip(header, parts[1:]):
-            matrix[rteam][normalize_team_name(cteam)] = int(val)
+        r = normalize_team_name(parts[0])
+        for c, val in zip(header, parts[1:]):
+            matrix[r][normalize_team_name(c)] = int(val)
 
     return comments, matrix, header, "\n"
 
 
-def write_h2h(comments, matrix, cols, newline):
+def write_h2h(comments, matrix, cols, nl):
     lines = comments[:]
     lines.append("TEAM " + " ".join(cols))
     for t in TEAM_ORDER:
-        row = [str(matrix[t][c]) for c in cols]
-        lines.append(f"{t} " + " ".join(row))
+        lines.append(f"{t} " + " ".join(str(matrix[t][c]) for c in cols))
     H2H_FILE.write_text("\n".join(lines) + "\n")
 
 
-def extract_result_from_json(path: Path):
+def extract_result_from_json(path):
     data = json.load(open(path))
     info = data.get("info", {})
 
     match_id = str(info.get("event", {}).get("match_number"))
-
     teams = info.get("teams", [])
+
     a = normalize_team_name(teams[0])
     b = normalize_team_name(teams[1])
 
@@ -187,23 +187,23 @@ def update_from_recent_json(entries, matrix):
     updated = 0
     h2h_updates = 0
 
-    json_files = sorted(JSON_DIR.glob("*.json"), key=lambda x: int(x.stem), reverse=True)
+    files = sorted(JSON_DIR.glob("*.json"), key=lambda x: int(x.stem), reverse=True)
 
     seen_any = False
 
-    for file in json_files:
-        match_id, (a, b), winner = extract_result_from_json(file)
+    for f in files:
+        match_id, (a, b), winner = extract_result_from_json(f)
 
         if match_id == "1" and seen_any:
             break
         seen_any = True
 
-        for entry in entries:
-            if entry["kind"] == "match" and entry["match_id"] == match_id:
-                if entry["result"] != "PENDING":
+        for e in entries:
+            if e["kind"] == "match" and e["match_id"] == match_id:
+                if e["result"] != "PENDING":
                     continue
 
-                entry["result"] = winner if winner else "NR"
+                e["result"] = winner if winner else "NR"
                 updated += 1
 
                 if winner:
@@ -213,11 +213,6 @@ def update_from_recent_json(entries, matrix):
                 break
 
     return updated, h2h_updates
-
-
-def compile_and_run_predictor():
-    subprocess.run(["g++", "-std=c++17", "-O2", "predictor.cpp", "-o", "predictor"])
-    return subprocess.run(["./predictor"]).returncode
 
 
 def main():

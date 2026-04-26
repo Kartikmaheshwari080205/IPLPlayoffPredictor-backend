@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install dependencies
+        run: pip install requests
+
       - name: Build predictor for Linux runner
         run: g++ -std=c++17 -O2 predictor.cpp -o predictor
 
