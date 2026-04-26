@@ -211,11 +211,39 @@ def find_pending_match(entries: list[dict[str, object]], team_a: str, team_b: st
     return None
 
 
-def extract_result_from_json(path: Path) -> Optional[tuple[tuple[str, str], Optional[str]]]:
+def find_latest_match(entries: list[dict[str, object]], team_a: str, team_b: str) -> Optional[dict[str, object]]:
+    pair = {team_a, team_b}
+    for entry in reversed(entries):
+        if entry["kind"] != "match":
+            continue
+        if {str(entry["team1"]), str(entry["team2"])} == pair:
+            return entry
+    return None
+
+
+def find_match_by_id(entries: list[dict[str, object]], match_id: str) -> Optional[dict[str, object]]:
+    for entry in entries:
+        if entry["kind"] != "match":
+            continue
+        if str(entry["match_id"]) == match_id:
+            return entry
+    return None
+
+
+def extract_result_from_json(path: Path) -> Optional[tuple[str, tuple[str, str], Optional[str]]]:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
 
     info = data.get("info", {})
+    event = info.get("event", {}) or {}
+    raw_match_number = event.get("match_number")
+    if isinstance(raw_match_number, int):
+        match_id = str(raw_match_number)
+    elif isinstance(raw_match_number, str) and raw_match_number.strip().isdigit():
+        match_id = raw_match_number.strip()
+    else:
+        return None
+
     teams = info.get("teams", [])
     if len(teams) != 2:
         return None
@@ -231,9 +259,9 @@ def extract_result_from_json(path: Path) -> Optional[tuple[tuple[str, str], Opti
         winner_team = normalize_team_name(str(winner))
         if winner_team is None:
             return None
-        return (team_a, team_b), winner_team
+        return match_id, (team_a, team_b), winner_team
 
-    return (team_a, team_b), None
+    return match_id, (team_a, team_b), None
 
 
 def update_from_recent_json(entries: list[dict[str, object]], matrix: dict[str, dict[str, int]]) -> tuple[int, int]:
@@ -249,29 +277,30 @@ def update_from_recent_json(entries: list[dict[str, object]], matrix: dict[str, 
     if not json_files:
         return 0, 0
 
-    latest_match = extract_result_from_json(json_files[0])
-    if latest_match is None:
-        return 0, 0
+    for json_file in json_files:
+        parsed_match = extract_result_from_json(json_file)
+        if parsed_match is None:
+            continue
 
-    pending_match = find_first_pending_match(entries)
-    if pending_match is None:
-        return 0, 0
+        match_id, (team_a, team_b), winner_team = parsed_match
+        fixture = find_match_by_id(entries, match_id)
+        if fixture is None:
+            continue
 
-    (team_a, team_b), winner_team = latest_match
-    pending_teams = {str(pending_match["team1"]), str(pending_match["team2"])}
-    if pending_teams != {team_a, team_b}:
-        return 0, 0
+        fixture_teams = {str(fixture["team1"]), str(fixture["team2"])}
+        if fixture_teams != {team_a, team_b}:
+            continue
 
-    if str(pending_match["result"]).upper() != "PENDING":
-        return 0, 0
+        if str(fixture["result"]).upper() != "PENDING":
+            break
 
-    pending_match["result"] = winner_team if winner_team is not None else "NR"
-    updated_matches = 1
+        fixture["result"] = winner_team if winner_team is not None else "NR"
+        updated_matches += 1
 
-    if winner_team is not None:
-        loser_team = team_b if winner_team == team_a else team_a
-        matrix[winner_team][loser_team] += 1
-        h2h_updates = 1
+        if winner_team is not None:
+            loser_team = team_b if winner_team == team_a else team_a
+            matrix[winner_team][loser_team] += 1
+            h2h_updates += 1
 
     return updated_matches, h2h_updates
 
