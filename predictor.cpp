@@ -36,6 +36,7 @@ vector<int> points;
 vector<pair<int, int>> remainingmatches;
 vector<vector<double>> pairwiseprobabilities;
 vector<double> probabilities;
+const string PROBABILITY_FILE = "probabilities.txt";
 
 bool IsNumber(const string& s)
 {
@@ -56,6 +57,39 @@ string ToUpper(string s)
         ch = (char)toupper((unsigned char)ch);
     }
     return s;
+}
+
+string CurrentTimestamp()
+{
+    auto now = chrono::system_clock::now();
+    time_t nowTime = chrono::system_clock::to_time_t(now);
+    tm localTime{};
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+    stringstream ss;
+    ss << put_time(&localTime, "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}
+
+void WriteProbabilitySnapshot(const string& status)
+{
+    ofstream fout(PROBABILITY_FILE, ios::trunc);
+    if(!fout.is_open())
+    {
+        cerr << "Failed to open probability file: " << PROBABILITY_FILE << endl;
+        return;
+    }
+    fout << "lastUpdated=" << CurrentTimestamp() << '\n';
+    fout << "status=" << status << '\n';
+    fout << "remainingMatches=" << remainingmatches.size() << '\n';
+    fout << fixed << setprecision(10);
+    for(double probability : probabilities)
+    {
+        fout << probability << '\n';
+    }
 }
 
 int ParseTeamToken(const string& token, const unordered_map<string, int>& nameToId)
@@ -490,6 +524,7 @@ int main()
     cout << "-------" << endl;
     SimulateMatches();
     cout << "-------" << endl;
+    WriteProbabilitySnapshot("computed");
     auto time_end = chrono::steady_clock::now();
     auto elapsed_ms = chrono::duration_cast<chrono::milliseconds>(time_end - time_start).count();
     cout << "Time taken: " << elapsed_ms << " ms" << endl;
