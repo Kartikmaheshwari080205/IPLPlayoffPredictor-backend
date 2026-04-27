@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import argparse
 import datetime as dt
 import json
@@ -18,7 +19,6 @@ MATCHES_FILE = ROOT / "matches.txt"
 H2H_FILE = ROOT / "h2h.txt"
 JSON_DIR = ROOT / "ipl_json"
 CRICSHEET_URL = "https://cricsheet.org/downloads/ipl_json.zip"
-FALLBACK_GITHUB_URL = "https://codeload.github.com/GokulGowthamS/Cricsheet/zip/refs/heads/main"
 
 TEAM_ORDER = ["MI", "CSK", "RCB", "KKR", "RR", "DC", "PBKS", "SRH", "GT", "LSG"]
 TEAM_SET = set(TEAM_ORDER)
@@ -92,6 +92,74 @@ def _stream_download_to_temp_zip(url: str, headers: Optional[dict[str, str]] = N
     return temp_zip_path
 
 
+def _download_zip_via_browser(url: str) -> bytes:
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:  # pragma: no cover - dependency is installed in CI
+        raise RuntimeError(
+            "Cricsheet blocked the direct HTTP download and Playwright is not installed. "
+            "Install playwright to continue using the official download source."
+        ) from exc
+
+    async def _fetch() -> bytes:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                context = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    viewport={"width": 1280, "height": 720},
+                    locale="en-US",
+                )
+                await context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+                )
+                page = await context.new_page()
+                await page.goto("https://cricsheet.org/downloads/", wait_until="domcontentloaded", timeout=120000)
+
+                for _ in range(30):
+                    cookies = await context.cookies()
+                    if any(cookie.get("name") == "wssplashchk" for cookie in cookies):
+                        break
+                    await page.wait_for_timeout(1000)
+                else:
+                    raise RuntimeError("Cricsheet verification cookie was not set in the browser session.")
+
+                payload = await page.evaluate(
+                    """async (downloadUrl) => {
+                        const response = await fetch(downloadUrl, { credentials: 'include' });
+                        const buffer = await response.arrayBuffer();
+                        return {
+                            status: response.status,
+                            contentType: response.headers.get('content-type') || '',
+                            bytes: Array.from(new Uint8Array(buffer)),
+                        };
+                    }""",
+                    url,
+                )
+
+                if payload["status"] != 200:
+                    raise RuntimeError(
+                        f"Browser fetch failed with status {payload['status']} for: {url}"
+                    )
+
+                body = bytes(payload["bytes"])
+                if not body.startswith(b"PK") and "zip" not in payload["contentType"].lower():
+                    raise RuntimeError(
+                        f"Browser fetch did not return a ZIP payload from: {url}"
+                    )
+                return body
+            finally:
+                await browser.close()
+
+    return asyncio.run(_fetch())
+
+
 def _extract_json_files_from_archive(archive_path: Path, target_dir: Path) -> int:
     extracted = 0
     with zipfile.ZipFile(archive_path) as archive:
@@ -101,12 +169,11 @@ def _extract_json_files_from_archive(archive_path: Path, target_dir: Path) -> in
             if not member_lower.endswith(".json"):
                 continue
 
-            # Primary path for fallback mirror and expected paths from IPL ZIP archives.
-            is_fallback_ipl_path = "raw_json_files/ipl_data/" in member_lower
+            is_cricsheet_mirror_path = "raw_json_files/ipl_data/" in member_lower
             is_cricsheet_ipl_path = "/ipl_json/" in member_lower
             is_flat_json = "/" not in member.strip("/")
 
-            if not (is_fallback_ipl_path or is_cricsheet_ipl_path or is_flat_json):
+            if not (is_cricsheet_mirror_path or is_cricsheet_ipl_path or is_flat_json):
                 continue
 
             filename = Path(member).name
@@ -121,50 +188,43 @@ def _extract_json_files_from_archive(archive_path: Path, target_dir: Path) -> in
 
 
 def download_and_extract_json_archive() -> None:
-    sources: list[tuple[str, Optional[dict[str, str]]]] = [
-        (
-            CRICSHEET_URL,
-            {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/zip,application/octet-stream,*/*",
-                "Referer": "https://cricsheet.org/",
-            },
-        ),
-        (FALLBACK_GITHUB_URL, {"User-Agent": "Mozilla/5.0"}),
-    ]
-
     temp_extract_dir = Path(tempfile.mkdtemp(prefix="ipl_json_extract_"))
-    last_error: Optional[Exception] = None
+    temp_zip_path: Optional[Path] = None
 
     try:
-        for url, headers in sources:
-            temp_zip_path: Optional[Path] = None
-            try:
-                temp_zip_path = _stream_download_to_temp_zip(url, headers)
-                extracted_count = _extract_json_files_from_archive(temp_zip_path, temp_extract_dir)
-                if extracted_count == 0:
-                    raise RuntimeError(f"No JSON files extracted from: {url}")
+        try:
+            temp_zip_path = _stream_download_to_temp_zip(
+                CRICSHEET_URL,
+                {
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/zip,application/octet-stream,*/*",
+                    "Referer": "https://cricsheet.org/",
+                },
+            )
+        except Exception as exc:
+            print(f"Direct download blocked; retrying through browser: {exc}")
+            zip_bytes = _download_zip_via_browser(CRICSHEET_URL)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
+                tmp_file.write(zip_bytes)
+                temp_zip_path = Path(tmp_file.name)
 
-                if JSON_DIR.exists():
-                    shutil.rmtree(JSON_DIR)
-                JSON_DIR.mkdir(parents=True, exist_ok=True)
+        extracted_count = _extract_json_files_from_archive(temp_zip_path, temp_extract_dir)
+        if extracted_count == 0:
+            raise RuntimeError(f"No JSON files extracted from: {CRICSHEET_URL}")
 
-                for json_file in temp_extract_dir.glob("*.json"):
-                    shutil.move(str(json_file), JSON_DIR / json_file.name)
+        if JSON_DIR.exists():
+            shutil.rmtree(JSON_DIR)
+        JSON_DIR.mkdir(parents=True, exist_ok=True)
 
-                print(f"Extracted {extracted_count} JSON files from {url}")
-                return
-            except Exception as exc:
-                last_error = exc
-                print(f"Download source failed: {url} -> {exc}")
-            finally:
-                if temp_zip_path:
-                    temp_zip_path.unlink(missing_ok=True)
-                for json_file in temp_extract_dir.glob("*.json"):
-                    json_file.unlink(missing_ok=True)
+        for json_file in temp_extract_dir.glob("*.json"):
+            shutil.move(str(json_file), JSON_DIR / json_file.name)
 
-        raise RuntimeError(f"All download sources failed. Last error: {last_error}")
+        print(f"Extracted {extracted_count} JSON files from {CRICSHEET_URL}")
     finally:
+        if temp_zip_path:
+            temp_zip_path.unlink(missing_ok=True)
+        for json_file in temp_extract_dir.glob("*.json"):
+            json_file.unlink(missing_ok=True)
         shutil.rmtree(temp_extract_dir, ignore_errors=True)
 
 
@@ -251,7 +311,11 @@ def extract_result_from_json(path):
     a = normalize_team_name(teams[0])
     b = normalize_team_name(teams[1])
 
-    winner = info.get("outcome", {}).get("winner")
+    outcome = info.get("outcome", {})
+    winner = outcome.get("winner")
+    # Cricsheet uses "eliminator" for ties decided via super over.
+    if not winner:
+        winner = outcome.get("eliminator")
     winner = normalize_team_name(winner) if winner else None
 
     return match_id, (a, b), winner, match_year
@@ -278,11 +342,13 @@ def update_from_recent_json(entries, matrix):
 
         for e in entries:
             if e["kind"] == "match" and e["match_id"] == match_id:
-                if e["result"] != "PENDING":
+                if e["result"] not in {"PENDING", "NR"}:
                     continue
                 if {e["team1"], e["team2"]} != {a, b}:
                     continue
                 if winner and winner not in {a, b}:
+                    continue
+                if e["result"] == "NR" and not winner:
                     continue
 
                 e["result"] = winner if winner else "NR"
