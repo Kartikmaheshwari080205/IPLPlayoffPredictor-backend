@@ -16,7 +16,19 @@ TEAM_COUNT = 10
 
 
 def now_timestamp() -> str:
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Return current time formatted as YYYY-MM-DD HH:MM:SS in IST (Asia/Kolkata).
+
+    Prefer using zoneinfo when available; fall back to a fixed +05:30 offset from UTC.
+    """
+    try:
+        from zoneinfo import ZoneInfo  # type: ignore
+
+        ist = dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        # Fallback: use UTC now and add 5h30m
+        ist = dt.datetime.utcnow() + dt.timedelta(hours=5, minutes=30)
+
+    return ist.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def count_remaining_matches(matches_file: Path) -> int:
