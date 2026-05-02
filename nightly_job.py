@@ -63,8 +63,13 @@ def write_unfeasible_snapshot(remaining_matches: int) -> None:
 
 
 def resolve_predictor_command() -> list[str]:
-    predictor_exe = ROOT / "predictor.exe"
     predictor_bin = ROOT / "predictor"
+    predictor_exe = ROOT / "predictor.exe"
+
+    is_windows = sys.platform.startswith("win")
+
+    if not is_windows and predictor_bin.exists():
+        return [str(predictor_bin)]
 
     if predictor_exe.exists():
         return [str(predictor_exe)]
