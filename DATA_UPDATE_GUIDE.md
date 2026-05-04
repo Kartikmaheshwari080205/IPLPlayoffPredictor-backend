@@ -5,36 +5,44 @@
 **Best for:** Cloud-based, automatic, no infrastructure needed
 
 ### How It Works:
-1. Workflow runs on a schedule (e.g., 2 AM daily)
-2. Pulls latest code
-3. Runs `nightly_job.py`
-4. Updates `matches.txt`, `h2h.txt`, and `probabilities.txt`
-5. Auto-commits and pushes changes back to GitHub
+1. Workflow runs **4 times daily** during IPL season
+2. Checks if there are pending matches
+3. If pending matches exist:
+   - Pulls latest code
+   - Runs `nightly_job.py`
+   - Updates match data and probabilities
+   - Auto-commits and pushes changes
+4. If no pending matches: Skips the update (tournament over)
+
+### Schedule (4 Times Daily):
+- **8:00 AM IST** - Morning update (2:30 AM UTC)
+- **2:00 PM IST** - Afternoon update (8:30 AM UTC)
+- **6:00 PM IST** - Evening update before matches (12:30 PM UTC)
+- **11:00 PM IST** - Night update after matches (5:30 PM UTC)
 
 ### Advantages:
 ✅ Free (part of GitHub Actions)  
+✅ Smart - only runs when matches are pending  
 ✅ No setup needed  
 ✅ Automatic - just set it and forget it  
 ✅ Logs visible in GitHub UI  
 ✅ Can manually trigger anytime  
+✅ Stops automatically when tournament ends  
 
 ### Configuration:
 Already created in `.github/workflows/nightly-update.yml`
 
-Edit the cron schedule:
+Edit the cron schedule if needed:
 ```yaml
-# Current: 2 AM UTC daily
-- cron: '0 2 * * *'
-
-# Other examples:
-- cron: '0 0 * * *'   # Midnight UTC
-- cron: '30 1 * * *'  # 1:30 AM UTC
-- cron: '0 20 * * *'  # 8 PM UTC
+# Current schedule (4 times daily in IST):
+- cron: '30 2 * * *'   # 8:00 AM IST
+- cron: '30 8 * * *'   # 2:00 PM IST
+- cron: '30 12 * * *'  # 6:00 PM IST
+- cron: '30 17 * * *'  # 11:00 PM IST
 ```
 
-### Timezone Reference:
-- UTC 2:00 AM = IST 7:30 AM (for India)
-- Adjust the hour value in cron accordingly
+**Cron Format**: `minute hour * * *` (in UTC)
+**IST to UTC**: Subtract 5:30 hours
 
 ---
 
@@ -227,23 +235,29 @@ jobs:
 ## 📊 How Data Flows in GitHub Actions Option
 
 ```
-GitHub Actions (2 AM UTC)
+GitHub Actions (4 Times Daily - During IPL Season)
+   8 AM | 2 PM | 6 PM | 11 PM IST
         ↓
 Checkout code
         ↓
-Run nightly_job.py
-  - Fetches IPL data
-  - Updates matches.txt
-  - Updates h2h.txt
-  - Generates probabilities.txt
+Check for pending matches in matches.txt
         ↓
-Git commit & push
+    ┌───────────────────────────┐
+    │ Pending matches found?    │
+    └───────────────────────────┘
+          ↙             ↖
+        YES             NO
+        ↓               ↓
+   Run job          Skip update
+   - Fetch IPL     (Tournament
+   - Update data      over)
+   - Commit & push
         ↓
-Docker image rebuilds (triggered by push)
+Docker image rebuilds
         ↓
 New image pushed to GHCR
         ↓
-Your deployment pulls fresh image
+✅ Fresh data available
 ```
 
 ---
@@ -251,14 +265,22 @@ Your deployment pulls fresh image
 ## 🎯 Recommended Setup
 
 **Use GitHub Actions scheduled workflow** because:
-1. ✅ No infrastructure to manage
-2. ✅ Automatic and reliable
-3. ✅ Free
-4. ✅ Integrated with your repository
-5. ✅ Visible logs and history
-6. ✅ Can manually trigger anytime
+1. ✅ Runs 4 times daily throughout IPL season
+2. ✅ Smart - stops when all matches are done
+3. ✅ No infrastructure to manage
+4. ✅ Automatic and reliable
+5. ✅ Free
+6. ✅ Integrated with your repository
+7. ✅ Visible logs and history
+8. ✅ Can manually trigger anytime
 
-The data gets updated, committed to GitHub, and your latest Docker image will have the fresh data!
+The data gets updated **4 times daily** automatically:
+- **Morning (8 AM IST)**: Pre-day update
+- **Afternoon (2 PM IST)**: Midday refresh  
+- **Evening (6 PM IST)**: Before match time
+- **Night (11 PM IST)**: After matches
+
+Your latest Docker image will have the freshest data!
 
 ---
 

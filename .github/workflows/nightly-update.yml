@@ -2,12 +2,16 @@ name: Nightly Data Update
 
 on:
   schedule:
-    # Runs every day at 2 AM UTC (or adjust for your timezone)
-    - cron: '0 2 * * *'
+    # Run 4 times a day during IPL season
+    # Times in UTC (add 5:30 hours for IST)
+    - cron: '30 2 * * *'   # 8:00 AM IST
+    - cron: '30 8 * * *'   # 2:00 PM IST
+    - cron: '30 12 * * *'  # 6:00 PM IST (before evening matches)
+    - cron: '30 17 * * *'  # 11:00 PM IST (after evening matches)
   workflow_dispatch:  # Manual trigger button
 
 jobs:
-  update-data:
+  check-and-update:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,15 +23,41 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Check for pending matches
+        id: check_pending
+        run: |
+          cd IPLPlayoffPredictor-backend
+          
+          # Check if matches.txt exists and has pending matches
+          if [ ! -f matches.txt ]; then
+            echo "pending=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Count PENDING matches
+          pending_count=$(grep -c "PENDING" matches.txt || echo 0)
+          
+          if [ "$pending_count" -gt 0 ]; then
+            echo "pending=true" >> $GITHUB_OUTPUT
+            echo "Found $pending_count pending matches"
+          else
+            echo "pending=false" >> $GITHUB_OUTPUT
+            echo "No pending matches - skipping update"
+          fi
+
       - name: Run nightly job
+        if: steps.check_pending.outputs.pending == 'true'
         run: |
           cd IPLPlayoffPredictor-backend
           python nightly_job.py
 
       - name: Commit and push updated data
+        if: steps.check_pending.outputs.pending == 'true'
         run: |
+          cd IPLPlayoffPredictor-backend
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          git commit -m "Update IPL data - $(date)" || echo "No changes to commit"
+          git commit -m "Update IPL data - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes to commit"
           git push
+
