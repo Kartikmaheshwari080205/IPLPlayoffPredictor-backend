@@ -9,6 +9,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent
 PROBABILITY_FILE = ROOT / "probabilities.txt"
 MATCHES_FILE = ROOT / "matches.txt"
+H2H_FILE = ROOT / "h2h.txt"
 TEAM_ORDER = ["MI", "CSK", "RCB", "KKR", "RR", "DC", "PBKS", "SRH", "GT", "LSG"]
 MAX_FEASIBLE_REMAINING_MATCHES = 27
 

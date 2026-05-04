@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ipl-predictor-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    volumes:
+      # Mount data files so they persist and can be updated
+      - ./matches.txt:/app/matches.txt
+      - ./h2h.txt:/app/h2h.txt
+      - ./ipl_json:/app/ipl_json
+      - ./probabilities.txt:/app/probabilities.txt:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
