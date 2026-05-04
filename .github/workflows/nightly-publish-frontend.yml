@@ -30,6 +30,18 @@ jobs:
       - name: Run nightly orchestration
         run: python nightly_job.py --threshold 27
 
+      - name: Commit and push updated match data to backend repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add matches.txt h2h.txt
+          if git diff --cached --quiet; then
+            echo "No match data changes to commit."
+          else
+            git commit -m "chore: nightly IPL data update"
+            git push origin HEAD:${{ github.ref }}
+          fi
+
       - name: Build frontend payload
         run: python build_frontend_payload.py --input probabilities.txt --output playoff_snapshot.json --threshold 27
 
