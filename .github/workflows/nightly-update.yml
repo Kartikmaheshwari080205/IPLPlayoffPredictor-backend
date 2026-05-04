@@ -1,0 +1,33 @@
+name: Nightly Data Update
+
+on:
+  schedule:
+    # Runs every day at 2 AM UTC (or adjust for your timezone)
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Manual trigger button
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run nightly job
+        run: |
+          cd IPLPlayoffPredictor-backend
+          python nightly_job.py
+
+      - name: Commit and push updated data
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git commit -m "Update IPL data - $(date)" || echo "No changes to commit"
+          git push
