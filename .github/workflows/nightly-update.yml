@@ -1,5 +1,8 @@
 name: Nightly Data Update
 
+permissions:
+  contents: write
+
 on:
   schedule:
     # Run 4 times a day during IPL season
