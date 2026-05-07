@@ -1,4 +1,4 @@
-name: Nightly Data Update
+name: Regular Data Update
 
 permissions:
   contents: write
@@ -73,6 +73,20 @@ jobs:
           fi
           python nightly_job.py
 
+      - name: Prepare frontend payload output path
+        if: steps.check_pending.outputs.pending == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          touch "$RUNNER_TEMP/playoff_snapshot.json"
+
+      - name: Build frontend payload
+        if: steps.check_pending.outputs.pending == 'true'
+        run: |
+          if [ -d IPLPlayoffPredictor-backend ]; then
+            cd IPLPlayoffPredictor-backend
+          fi
+          python build_frontend_payload.py --input probabilities.txt --output "$RUNNER_TEMP/playoff_snapshot.json" --threshold 27
+
       - name: Commit and push updated data
         if: steps.check_pending.outputs.pending == 'true'
         env:
@@ -87,4 +101,47 @@ jobs:
           git commit -m "Update IPL data - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes to commit"
           git remote set-url origin https://github-actions[bot]:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git push
+
+      - name: Clone frontend repo
+        if: steps.check_pending.outputs.pending == 'true'
+        env:
+          FRONTEND_REPO: ${{ secrets.FRONTEND_REPO }}
+          FRONTEND_REPO_PAT: ${{ secrets.FRONTEND_REPO_PAT }}
+        run: |
+          cd "$RUNNER_TEMP"
+          if [ -z "$FRONTEND_REPO" ]; then
+            echo "Missing secret: FRONTEND_REPO (owner/repo)"
+            exit 1
+          fi
+          if [ -z "$FRONTEND_REPO_PAT" ]; then
+            echo "Missing secret: FRONTEND_REPO_PAT"
+            exit 1
+          fi
+          git clone https://x-access-token:${FRONTEND_REPO_PAT}@github.com/${FRONTEND_REPO}.git frontend-repo
+
+      - name: Commit and push payload to frontend repo
+        if: steps.check_pending.outputs.pending == 'true'
+        env:
+          FRONTEND_BRANCH: ${{ vars.FRONTEND_BRANCH || 'main' }}
+          FRONTEND_DATA_PATH: ${{ vars.FRONTEND_DATA_PATH || 'src/data/playoff_snapshot.json' }}
+        run: |
+          set -e
+          cd "$RUNNER_TEMP/frontend-repo"
+          if git ls-remote --exit-code --heads origin "$FRONTEND_BRANCH" >/dev/null 2>&1; then
+            git checkout -B "$FRONTEND_BRANCH" "origin/$FRONTEND_BRANCH"
+          else
+            echo "Branch '$FRONTEND_BRANCH' not found on remote. Creating it."
+            git checkout --orphan "$FRONTEND_BRANCH"
+          fi
+          mkdir -p "$(dirname "$FRONTEND_DATA_PATH")"
+          cp "$RUNNER_TEMP/playoff_snapshot.json" "$FRONTEND_DATA_PATH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FRONTEND_DATA_PATH"
+          if git diff --cached --quiet; then
+            echo "No frontend payload changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: regular playoff snapshot update"
+          git push -u origin "$FRONTEND_BRANCH"
 
