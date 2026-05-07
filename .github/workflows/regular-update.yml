@@ -100,6 +100,8 @@ jobs:
           git add -A
           git commit -m "Update IPL data - $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes to commit"
           git remote set-url origin https://github-actions[bot]:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          git fetch origin main
+          git rebase origin/main
           git push
 
       - name: Clone frontend repo
